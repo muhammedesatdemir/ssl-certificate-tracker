@@ -36,7 +36,7 @@
 - `list_filter`: expiration_date (and/or status-based filter), `search_fields`: domain_name, customer_name.
 
 ## Seed Data
-- Management command `seed_certificates` creates 4-5 sample certificates covering every state (expired, expires today, expiring soon, valid). Dates are relative to `timezone.localdate()`. Idempotent: re-running must not create duplicates (`get_or_create`).
+- Management command `seed_certificates` creates 4-5 sample certificates covering every state (expired, expires today, expiring soon, valid). Dates are relative to `timezone.localdate()`. Idempotent: re-running must not create duplicates. Because dates are relative to today, the command deletes and recreates only its own reserved `*.example.com` rows instead of using `get_or_create`.
 - README documents it as an optional step so a fresh checkout shows a populated table.
 
 ## Testing Standards
