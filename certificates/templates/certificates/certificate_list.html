@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SSL Sertifika Takibi</title>
+  <style>
+    :root {
+      --bg: #f5f7fa; --card: #fff; --text: #1f2937; --muted: #6b7280; --line: #e5e7eb;
+      --red-bg: #fee2e2; --red-fg: #b91c1c;
+      --amber-bg: #fef3c7; --amber-fg: #b45309;
+      --green-bg: #dcfce7; --green-fg: #15803d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--text);
+           font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .container { max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
+    .sub { margin: 0 0 1.25rem; color: var(--muted); font-size: .9rem; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06); overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .75rem 1rem; text-align: left; white-space: nowrap; }
+    th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+         color: var(--muted); background: #fafafa; border-bottom: 1px solid var(--line); }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #fafbfc; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .badge { display: inline-block; padding: .15rem .65rem; border-radius: 999px;
+             font-size: .8rem; font-weight: 600; }
+    .badge-expired { background: var(--red-bg); color: var(--red-fg); }
+    .badge-soon    { background: var(--amber-bg); color: var(--amber-fg); }
+    .badge-valid   { background: var(--green-bg); color: var(--green-fg); }
+    .empty { padding: 2rem; text-align: center; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SSL Sertifika Takibi</h1>
+    <p class="sub">Bitiş tarihine göre sıralı · Bugün: {{ today|date:"d.m.Y" }}</p>
+
+    <div class="card">
+      {% if rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Alan adı</th>
+            <th>Müşteri</th>
+            <th>Bitiş tarihi</th>
+            <th class="num">Kalan gün</th>
+            <th>Durum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.certificate.domain_name }}</td>
+            <td>{{ row.certificate.customer_name }}</td>
+            <td>{{ row.certificate.expiration_date|date:"d.m.Y" }}</td>
+            <td class="num">{{ row.days_left }}</td>
+            <td><span class="badge {{ row.badge_class }}">{{ row.status }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">Henüz sertifika kaydı yok. Yönetim panelinden ekleyebilirsiniz.</p>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

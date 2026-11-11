@@ -133,3 +133,106 @@ class OrderingTests(TestCase):
             domain_name="a.com", customer_name="x", expiration_date=TODAY - timedelta(days=10)
         )
         self.assertEqual(list(Certificate.objects.all()), [earlier, later])
+
+
+# --- View and admin tests -------------------------------------------------
+# These go through the real request cycle, which uses timezone.localdate(), so
+# fixtures are built relative to it instead of the fixed TODAY above.
+
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.urls import reverse  # noqa: E402
+from django.utils import timezone  # noqa: E402
+
+from .admin import CertificateAdmin  # noqa: E402
+
+
+def make_saved(offset_days, domain):
+    return Certificate.objects.create(
+        domain_name=domain,
+        customer_name="Müşteri",
+        expiration_date=timezone.localdate() + timedelta(days=offset_days),
+    )
+
+
+class CertificateListViewTests(TestCase):
+    def test_list_page_is_public_and_ok(self):
+        response = self.client.get(reverse("certificates:list"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_empty_state_message(self):
+        response = self.client.get(reverse("certificates:list"))
+        self.assertContains(response, "Henüz sertifika kaydı yok")
+
+    def test_rows_are_ordered_by_expiration_date(self):
+        make_saved(100, "valid.com")
+        make_saved(-5, "expired.com")
+        make_saved(10, "soon.com")
+        response = self.client.get(reverse("certificates:list"))
+        domains = [row["certificate"].domain_name for row in response.context["rows"]]
+        self.assertEqual(domains, ["expired.com", "soon.com", "valid.com"])
+
+    def test_shows_status_text_days_left_and_badge_class(self):
+        make_saved(-5, "expired.com")
+        make_saved(0, "today.com")
+        make_saved(100, "valid.com")
+        response = self.client.get(reverse("certificates:list"))
+        rows = {r["certificate"].domain_name: r for r in response.context["rows"]}
+
+        self.assertEqual(rows["expired.com"]["status"], STATUS_EXPIRED)
+        self.assertEqual(rows["expired.com"]["days_left"], -5)
+        self.assertEqual(rows["expired.com"]["badge_class"], "badge-expired")
+        self.assertEqual(rows["today.com"]["status"], STATUS_EXPIRING_SOON)
+        self.assertEqual(rows["today.com"]["days_left"], 0)
+        self.assertEqual(rows["today.com"]["badge_class"], "badge-soon")
+        self.assertEqual(rows["valid.com"]["status"], STATUS_VALID)
+        self.assertEqual(rows["valid.com"]["badge_class"], "badge-valid")
+
+        for label in (STATUS_EXPIRED, STATUS_EXPIRING_SOON, STATUS_VALID):
+            self.assertContains(response, label)
+
+
+class CertificateAdminTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin_user = get_user_model().objects.create_superuser(
+            "admin", "admin@example.com", "pass12345"
+        )
+
+    def setUp(self):
+        self.client.force_login(self.admin_user)
+
+    def test_changelist_shows_status_and_days_left(self):
+        make_saved(-3, "expired.com")
+        response = self.client.get(reverse("admin:certificates_certificate_changelist"))
+        self.assertContains(response, "expired.com")
+        self.assertContains(response, STATUS_EXPIRED)
+        self.assertContains(response, "-3")
+
+    def test_list_display_and_search_config(self):
+        self.assertIn("status_display", CertificateAdmin.list_display)
+        self.assertIn("days_left_display", CertificateAdmin.list_display)
+        self.assertEqual(CertificateAdmin.search_fields, ("domain_name", "customer_name"))
+
+    def test_search_finds_by_domain_and_customer(self):
+        make_saved(5, "findme.com")
+        make_saved(5, "other.com")
+        url = reverse("admin:certificates_certificate_changelist")
+        response = self.client.get(url, {"q": "findme"})
+        self.assertContains(response, "findme.com")
+        self.assertNotContains(response, "other.com")
+
+    def test_status_filter_matches_model_status(self):
+        # The DB-level filter and Certificate.status() must agree at every boundary.
+        offsets = {-1: "expired", 0: "soon", 29: "soon", 30: "soon", 31: "valid"}
+        for offset in offsets:
+            make_saved(offset, f"d{offset + 5}.com")
+        url = reverse("admin:certificates_certificate_changelist")
+        labels = {"expired": STATUS_EXPIRED, "soon": STATUS_EXPIRING_SOON, "valid": STATUS_VALID}
+        for key, label in labels.items():
+            response = self.client.get(url, {"durum": key})
+            shown = list(response.context["cl"].queryset)
+            self.assertTrue(shown, key)
+            for cert in shown:
+                self.assertEqual(cert.status(), label)
+            expected = [o for o, k in offsets.items() if k == key]
+            self.assertEqual(len(shown), len(expected), key)
