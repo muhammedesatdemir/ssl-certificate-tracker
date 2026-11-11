@@ -236,3 +236,29 @@ class CertificateAdminTests(TestCase):
                 self.assertEqual(cert.status(), label)
             expected = [o for o, k in offsets.items() if k == key]
             self.assertEqual(len(shown), len(expected), key)
+
+
+class SeedCommandTests(TestCase):
+    def test_seed_creates_every_status_and_is_rerunnable(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        call_command("seed_certificates", stdout=StringIO())
+        call_command("seed_certificates", stdout=StringIO())  # no duplicates
+
+        certs = list(Certificate.objects.all())
+        self.assertEqual(len(certs), 5)
+        statuses = {c.status() for c in certs}
+        self.assertEqual(statuses, {STATUS_EXPIRED, STATUS_EXPIRING_SOON, STATUS_VALID})
+        self.assertIn(0, [c.days_left() for c in certs])
+        self.assertIn(30, [c.days_left() for c in certs])
+
+    def test_seed_does_not_touch_other_records(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        keep = make_saved(5, "real-customer.com")
+        call_command("seed_certificates", stdout=StringIO())
+        self.assertTrue(Certificate.objects.filter(pk=keep.pk).exists())
