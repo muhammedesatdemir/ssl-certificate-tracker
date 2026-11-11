@@ -1,0 +1,1495 @@
+
+> E-Tuğra için hazırlayacağımız 'ssl sertifika takip' uygulamasının iş
+  kurallarını ve teknik kısıtlarını içeren taslak CLAUDE.md dosyası proje
+  kökünde paylaşıyorum.
+  Henüz tek satır kod veya plan çıkarma, bu kuralları bir ssl/güvenlik domaini
+  perspektifinden incele:
+  1. Sertifika bitiş tarihi hesaplamalarında gözden kaçabilecek mimari bir
+  kural veya timezone riski var mı?
+  2. CLAUDE.mdye eklemeyi önerdiğin kritik bir teknik standart var mı?
+     önerilerini gerekçeleriyle listele, hangilerini kural setine dahil
+  edeceğime karar verebilmem için belirttiğim doğrultuda özet rapor sun.
+
+  E-Tuğra için hazırlayacağımız ssl sertifika takip uygulaması detayları:
+  "Ödev: Sertifika Takip Listesi (Django)
+
+  Müşterilerimizin SSL sertifikalarının bitiş tarihlerini takip eden basit bir
+  Django uygulaması yapmanı istiyoruz:
+  1. Bir Sertifika modeli: alan adı, müşteri adı, bitiş tarihi.
+  2. Kayıtlar Django admin panelinden eklenip düzenlenebilsin.
+  3. Bir liste sayfası: tüm sertifikalar bitiş tarihine göre sıralı görünsün.
+  Her satırda kalan gün sayısı ve durum (süresi dolmuş / yakında dolacak /
+  geçerli) yazsın.
+  4. Durum hesaplaması için en az 5 test.
+  5. README dosyasında kurulum ve çalıştırma adımları olsun.
+     "
+
+● Önce proje kökünde CLAUDE.md olup olmadığına bakıyorum.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● CLAUDE.md'yi inceledim. Henüz kod veya plan yok, yalnızca rapor var.
+
+  1. Mimari ve timezone riskleri
+
+  #: R1
+  Risk: expiration_date tipi belirsiz (Date mi DateTime mı?). Kural 9
+  timezone.now kullanmayı zorunlu kılıyor, o da datetime döner. Kural 11-13 ise
+   today ile karşılaştırıyor.
+  Neden önemli: Bu alan DateField ise datetime ile karşılaştırma TypeError
+  verir.
+  Kural uygulanırsa bu hata kaçınılmaz olur.
+  Öneri: Kritik. DateField kullanın. "Bugün" için timezone.localdate() yazın,
+  timezone.now() yazmayın.
+  ────────────────────────────────────────
+  #: R2
+  Risk: Hangi saat dilimine göre "bugün"?
+  Neden önemli: X.509 notAfter UTC'dir. 23:30 UTC'de biten sertifika İstanbul'da
+
+  ertesi gün 02:30'dur. Sunucu UTC'de çalışıp kullanıcı UTC+3'te bakarsa durum
+  bir gün kayabilir.
+  Öneri: Kritik. USE_TZ=True ve TIME_ZONE='Europe/Istanbul' ayarlayın. Tarihin
+  "İstanbul takvim günü" olduğunu yazın.
+  ────────────────────────────────────────
+  #: R3
+  Risk: Sınır günü belirsiz. expiration_date == today kuralda "Yakında Dolacak"
+  oluyor. Gerçekte sertifika o gün saatine kadar geçerli.
+  Neden önemli: Kural kendi içinde tutarlı ama yazılı değil. Test yazarı ve
+  kullanıcı bunu "bugün bitiyor, 0 gün kaldı" diye yorumlayabilir.
+  Öneri: Gün sonu dahildir, 0 gün kalan "Yakında Dolacak" olur diye açıkça
+  yazın.
+  Kalan gün (expiration_date - today).days olarak tanımlansın.
+  ────────────────────────────────────────
+  #: R4
+  Risk: Durum mantığının birden fazla yerde tekrarlanması. Admin, liste view'ı
+  ve
+  şablon ayrı hesaplayabilir.
+  Neden önemli: Tek bir yerde değişen eşik diğerlerinde farklı sonuç üretir.
+  Admin'de "Geçerli", listede "Yakında" görünür.
+  Öneri: Tek kaynak kuralı ekleyin. Durum ve kalan gün modelde (property ya da
+  servis fonksiyonu) hesaplansın. Admin ve şablon bunu çağırsın.
+  ────────────────────────────────────────
+  #: R5
+  Risk: 30 gün sihirli sayı.
+  Neden önemli: Testte ve kodda ayrı ayrı yazılırsa tutarsızlık çıkar.
+  Öneri: EXPIRY_WARNING_DAYS = 30 tek sabit olsun. Testler de bu sabiti
+  kullansın.
+  ────────────────────────────────────────
+  #: R6
+  Risk: Mock stratejisi eksik. unittest.mock ile timezone.now yamalamak, import
+  edildiği yere göre sessizce çalışmayabilir.
+  Neden önemli: Test geçer ama gerçek tarihe bağlı kalır. Bu tür testler ay sonu
+
+  ya da yılbaşında kırılır.
+  Öneri: today parametresini alan bir fonksiyon tasarlayın (dependency
+  injection). Yama gerekirse "kullanıldığı yerde patch et" kuralını yazın.
+  ────────────────────────────────────────
+  #: R7
+  Risk: Aynı domain için birden fazla kayıt.
+  Neden önemli: Yenileme sırasında eski ve yeni sertifika bir arada olabilir.
+  domain_name unique yapılırsa yenileme engellenir. Hiç kısıt koymazsanız çift
+  kayıt oluşur.
+  Öneri: domain_name tek başına unique olmasın. İsterseniz (domain_name,
+  expiration_date) unique olsun. Bu bir karar noktası.
+  ────────────────────────────────────────
+  #: R8
+  Risk: Sıralama ve index.
+  Neden önemli: Meta.ordering = ['expiration_date'] yoksa sıralama view'a
+  bağımlı
+  kalır. SQLite'ta bu ölçekte index etkisi küçüktür ama zararı yok.
+  Öneri: İndeks kuralı kalsın. Meta.ordering de eklensin. Sıralama DB'de
+  yapılsın, Python'da yapılmasın.
+
+  2. CLAUDE.md'ye eklenmesini önerdiklerim
+
+  Önerim: A grubu zorunlu, B grubu çoğu eklenmeli, C grubu isteğe bağlı.
+
+  A. Doğruluk ve güvenlik
+  1. USE_TZ=True, TIME_ZONE='Europe/Istanbul', LANGUAGE_CODE='tr'. Gerekçe: R2.
+  2. expiration_date bir DateField'tir ve "bugün" timezone.localdate() ile
+     alınır. Mevcut 9. satırdaki "now strictly" kuralını bununla değiştirin.
+     Gerekçe: R1.
+  3. Durum ve kalan gün tek yerde hesaplanır. Eşik tek sabittir. Gerekçe: R4,
+     R5.
+  4. Liste sayfası müşteri adlarını gösteriyor. Sayfayı LoginRequired arkasına
+     alın ya da "ödev kapsamında herkese açık" diye bilinçli not düşün.
+     Varsayılan olarak herkese açık bırakılırsa müşteri bilgisi sızar. Bu bir
+     karar noktası.
+  5. SECRET_KEY, DEBUG ve ALLOWED_HOSTS ortam değişkeninden okunur. Repoda gizli
+     anahtar bulunmaz. .gitignore içinde db.sqlite3 ve .env olsun.
+
+  B. Test ve kalite
+  6. Testler today değerini enjekte eder. Gerçek saate bağımlı test yazılmaz.
+  Gerekçe: R6.
+  7. Sınır testleri: dün, bugün, bugün+29, bugün+30, bugün+31. Mevcut "exactly
+  30 days" maddesi bunu kısmen kapsıyor, ama sonrasındaki +31 ve öncesindeki +29
+  değerlerini de yazın.
+  8. En az bir test liste sayfasının sıralamasını ve görünen durum metnini
+  doğrular. Ödev yalnızca durum hesabı için 5 test istiyor. View testi ek
+  güvence verir.
+  9. Admin: list_display içinde durum ve kalan gün, list_filter ve search_fields
+  (domain, müşteri) bulunsun.
+  10. domain_name küçük harfe normalize edilir. Bir validator ile format kontrol
+  edilir (joker *. kabul edilir). Gerekçe: aynı alan adının "Example.com" ve
+  "example.com" olarak çift girilmesini önler.
+  11. requirements.txt içinde Django sürümü sabitlenir (Django>=5.0,<6).
+  README'deki kurulum adımları bu dosyaya dayanır.
+
+  C. Kapsam sınırları
+  12. Kapsam dışı: canlı TLS taraması, e-posta ya da bildirim, API, Celery. Ödev
+  bunları istemiyor. Bu madde "aşırı mühendislik" riskini kapatır.
+  13. Metinlerde durum etiketleri Türkçe sabitlerdir, tek yerde tanımlanır. Bu
+  madde R4 ile birleşebilir.
+
+  Karar için özet
+
+  - Mutlaka dahil edin: 1, 2, 3, 5, 6. Bunlar olmadan tarih hesabı yanlış ya da
+    kırılgan olur.
+  - Sizin kararınız: 4 (erişim), R7 (unique kuralı), R3 (sınır günü dili).
+  - Düşük maliyetli, yararlı: 7, 9, 10, 11, 12.
+
+  Hangilerini dahil edeceğinizi söylerseniz CLAUDE.md'yi güncelleyebilirim.
+
+> Tespitler gayet yerinde ve mantıklı, özellikle timezone ve test tarafındaki
+  detaylar iyi yakalanmış.
+  Bıraktığın karar noktaları ve önerilerin için tercihlerim şöyle:
+  1. Kapsam ve Kurallar:
+  - Login/Auth: Kesinlikle eklemeyelim. ödev metninde açıkça 'kullanıcı girişi
+  beklenmiyor' yazıyor, projeyi gereksiz şişirmeyelim. Liste sayfası herkese
+  açık kalsınn bunun ödev kısıtı gereği bilinçli bir tercih olduğunu README'de
+  belirtiriz.
+  - Domain benzersizliği: Dediğin gibi sertifika yenilemelerinde aynı domain
+  farklı tarihlerle gelebilir bu yüzden domain tek başına unique olmasın.
+  '(domain_name, expiration_date)' çiftine 'unique_together' verelim.
+  - Sınır günü: 'expiration_date == today' olduğunda kalan gün 0 olsun ve gün
+  sonuna kadar geçerli kabul edilip 'Yakında Dolacak' sayılsın. Kalan gün
+  hesabı doğrudan (expiration_date - today).days şeklinde ilerlesin.
+
+  2. Teknik Standartlar ve Test:
+  - A grubundaki maddelerin tamamı (Europe/Istanbul saat dilimi, DateField +
+  timezone.localdate() vs.) kural setinde yer alsın.
+  - Testlerde mock'larla uğraşıp işi karmaşıklaştırmak yerine modeldeki metoda
+  opsiyonel bir "today=None" parametresi verebiliriz sanırım. test yazarken
+  istediğimiz tarihi dışarıdan rahatça paslayabilelim yani.
+  - Sınır testleri (dün, bugün, +29, +30, +31 gün), admin filtreleri ve
+  requirements.txt için sürüm sabitleme önerilerin de tam isabet ekleyelim.
+  - Celery, canlı TLS tarama, e-posta bildirimi veya joker domain (*.domain)
+  regex'i gibi şeylere hiç girmeyelim, bizden beklenildiği şekilde sade ve
+  odaklı kalalım.
+
+  şimdi:
+  1. Bu tercihler doğrultusunda CLAUDE.md dosyasını güncelle.
+  2. Kod yazmaya geçmeden önce de projeyi adım adım nasıl geliştireceğimize
+  dair kısa ve net bir plan çıkar, üzerinden geçelim.
+
+● Write(CLAUDE.md)
+  ⎿  Added 34 lines, removed 8 lines
+       3  ## Stack
+       4  - Python 3.11+, Django 5.x, SQLite
+       5  - Standard library / Django native tools (No unnecessary extern
+          al packages)
+       6 +- `requirements.txt` pins Django (e.g. `Django>=5.0,<6`); READM
+         +E setup steps rely on it.                                      
+       7  
+       8 +## Scope (keep it simple)                                      
+       9 +- In scope: `Certificate` model, Django admin CRUD, one public 
+         +list page, status tests, README.                               
+      10 +- Out of scope, do NOT add: authentication/login, Celery, live 
+         +TLS scanning, email/notifications, REST API, wildcard-domain re
+         +gex validation.                                                
+      11 +- The list page is intentionally public (the assignment expects
+         + no user login). State this as a deliberate choice in README.  
+      12 +                                                               
+      13 +## Settings                                                    
+      14 +- `USE_TZ = True`, `TIME_ZONE = 'Europe/Istanbul'`, `LANGUAGE_C
+         +ODE = 'tr'`.                                                   
+      15 +- `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS` are read from environm
+         +ent variables (dev-safe defaults allowed, no real secret commit
+         +ted).                                                          
+      16 +- `.gitignore` includes `db.sqlite3`, `.env`, `__pycache__/`, v
+         +env folders.                                                   
+      17 +                                                               
+      18  ## Domain & Business Logic Rules
+      19  - Model: `Certificate` (domain_name, customer_name, expiration_
+          date)
+       9 -- Timezone awareness: Use `django.utils.timezone.now` strictly,
+         - never naive `datetime.now()`.                                 
+      10 -- Status Definitions:                                          
+      11 -  - "Süresi Dolmuş" (Expired): expiration_date < today         
+      12 -  - "Yakında Dolacak" (Expiring Soon): today <= expiration_date
+         - <= today + 30 days                                            
+      13 -  - "Geçerli" (Valid): expiration_date > today + 30 days       
+      14 -- Performance: Index `expiration_date` for efficient ordering. 
+      20 +  - `expiration_date` is a `DateField` (calendar day in Europe/
+         +Istanbul), `db_index=True`.                                    
+      21 +  - `Meta.ordering = ['expiration_date']`; sorting happens in t
+         +he DB, not in Python.                                          
+      22 +  - `unique_together = (domain_name, expiration_date)`. `domain
+         +_name` alone is NOT unique (renewals overlap with the old certi
+         +ficate).                                                       
+      23 +- "Today" is ALWAYS `django.utils.timezone.localdate()`. Never 
+         +`datetime.now()`, never naive datetimes, and never compare a `d
+         +atetime` (`timezone.now()`) with the `DateField`.              
+      24 +- Remaining days = `(expiration_date - today).days` (negative o
+         +nce expired).                                                  
+      25 +- Boundary: `expiration_date == today` means 0 days left; the c
+         +ertificate is valid until end of day and counts as "Yakında Dol
+         +acak".                                                         
+      26 +- Status definitions (single threshold constant `EXPIRY_WARNING
+         +_DAYS = 30`; never hard-code 30 elsewhere):                    
+      27 +  - "Süresi Dolmuş" (Expired): days_left < 0                   
+      28 +  - "Yakında Dolacak" (Expiring Soon): 0 <= days_left <= EXPIRY
+         +_WARNING_DAYS                                                  
+      29 +  - "Geçerli" (Valid): days_left > EXPIRY_WARNING_DAYS         
+      30 +- Single source of truth: the model methods `days_left(today=No
+         +ne)` and `status(today=None)` are the only place status logic l
+         +ives. Admin and list template call them; no duplicate calculati
+         +on. Status label strings are defined once as constants.        
+      31 +- `today=None` parameter: when `None`, use `timezone.localdate(
+         +)`; otherwise use the passed `date`.                           
+      32  
+      33 +## Admin                                                       
+      34 +- `list_display`: domain_name, customer_name, expiration_date, 
+         +days left, status.                                             
+      35 +- `list_filter`: expiration_date (and/or status-based filter), 
+         +`search_fields`: domain_name, customer_name.                   
+      36 +                                                               
+      37  ## Testing Standards
+      17 -- Unit tests must strictly isolate time calculations using `uni
+         -ttest.mock` or freeze dates.                                   
+      18 -- Cover boundary conditions: exactly today, exactly 30 days, ne
+         -gative days, far future.                                       
+      38   No newline at end of file
+      39 +- Do not mock the clock. Pass `today=` explicitly into the mode
+         +l methods; tests must never depend on the real date.           
+      40 +- Minimum 5 status tests; boundary set is mandatory: yesterday 
+         +(-1), today (0), +29, +30, +31 days. Also cover far future and 
+         +far past.                                                      
+      41 +- Add one view test: list page ordering by `expiration_date` an
+         +d displayed status text.                                       
+      42 +- Add one test for `unique_together` behaviour (same domain, di
+         +fferent date allowed; same pair rejected).                     
+      43 +                                                               
+      44 +## README                                                      
+      45 +- Setup (venv, `pip install -r requirements.txt`, migrate, crea
+         +tesuperuser, runserver), how to run tests, status rules, and th
+         +e "public list page is intentional" note.                      
+
+● CLAUDE.md güncellendi. Kararlarınızı şöyle işledim:
+
+  - Kapsam dışı olanlar: Login, Celery, TLS tarama, e-posta ve joker domain
+    regex'i ekli değil. Liste sayfasının herkese açık olması README'de bilinçli
+    tercih olarak yazılacak.
+  - A grubu: Saat dilimi, DateField + localdate(), tek durum kaynağı, tek eşik
+    sabiti ve ortam değişkenleri kural setinde.
+  - Unique kuralı: (domain_name, expiration_date) çifti için unique_together
+    var. Bunun için bir test de ekledim.
+  - Sınır günü: expiration_date == today olunca kalan gün 0 olur ve durum
+    "Yakında Dolacak" sayılır.
+  - Testler: Saat mock'lanmıyor. Modeldeki days_left(today=None) ve
+    status(today=None) metotlarına tarih dışarıdan verilecek. Sınır testleri −1,
+    0, +29, +30 ve +31 gün için yazılacak.
+  - Eklediklerim: İsteğiniz dışında bir view testi (sıralama ve görünen durum
+    metni) ve admin ayarlarını ekledim. Beğenmezseniz çıkarırım.
+  - Kural setinde olmayanlar: Alan adını küçük harfe çevirme ve format
+    validator'ünü eklemedim, çünkü onayınız yoktu. Büyük/küçük harf farkıyla
+    çift kayıt riski kalıyor. Düşük maliyetli bir save() normalizasyonu
+    istiyorsanız söyleyin.
+
+  Geliştirme planı
+
+  1. İskelet: venv, requirements.txt (Django sabit sürüm), django-admin
+     startproject ve startapp certificates, .gitignore. Ardından settings.py
+     düzenlenir: saat dilimi, dil, ortam değişkenleri.
+  2. Model: Certificate, index, ordering, unique_together, EXPIRY_WARNING_DAYS,
+     durum sabitleri, days_left(today=None) ve status(today=None). Sonra
+     migration.
+  3. Testler (önce testler): Model testleri ve sınır testleri yazılır. Beş sınır
+     testi ile unique_together testi burada olur. Bunlar geçince model
+     kesinleşir.
+  4. Admin: list_display, list_filter, search_fields.
+  5. Liste sayfası: ListView, urls.py, şablon. Şablon kalan günü ve durumu
+     modelden çağırır. Durum rozetlerinde ayırt edici renk kullanılır. Ardından
+     view testi yazılır.
+  6. README: Kurulum, çalıştırma, test, durum kuralları ve herkese açık sayfa
+     notu.
+  7. Son kontrol: Tüm testleri çalıştırın, temiz bir venv'de README adımlarını
+     baştan deneyin ve admin'den örnek kayıtla sayfayı elle kontrol edin.
+
+  Planda değiştirmek istediğiniz bir şey yoksa 1. adımdan başlıyorum.
+
+> Plan gayet temiz görünüyor.
+  ufak iki ekleme yapalımm, sonra doğrudan 1. adıma geçebilirsin:
+
+  1. Domain normalizasyonu: Söylediğin çok doğru, gözden kaçmasın. Modelin
+  "save()" metodunda "domain_name" alanını "lower().strip()" yapalım ki
+  büyük/küçük harf veya yanlışlıkla boşluk bırakma yüzünden yinelenen kayıt
+  oluşmasın, dediğin gibi maliyetsiz ama faydalı bir dokunuş olmalı.
+  2. View testi ve admin: İkisi de kalsın, kesinlikle çıkarmayalım ekstra
+  güvence ve derli toplu bir admin paneli iyi olur.
+  3. Son kontrole ufak bir dokunuş yapmam lazım: 7. adımda sistemi elle
+  denerken tek tek elle veri girmekle vakit kaybetmeyelim. Farklı durumlara
+  (süresi dolmuş, bugün biten, yakında dolacak, geçerli) sahip 4-5 tane örnek
+  sertifikayı veritabanına basacak basit bir seed komutu veya fonksiyonu
+  ekleyelim. Hem bizim kontrolümüzü hızlandırır hem de projeyi çalıştıran kişi
+  hemen dolu bir tablo görür.
+     Kalan her şey tam istediğim gibi.
+     Birinci adımdan (iskelet, requirements.txt vs.) başlayabiliriz.
+     Kodu oluşturup terminalde yapmam gerekenleri adımlar halinde söyle ki
+  işlem doğruluğunu teyit edebileyiim.
+
+● Update(CLAUDE.md)
+  ⎿  Added 1 line
+      20    - `expiration_date` is a `DateField` (calendar day in Europe/
+          Istanbul), `db_index=True`.
+      21    - `Meta.ordering = ['expiration_date']`; sorting happens in t
+          he DB, not in Python.
+      22    - `unique_together = (domain_name, expiration_date)`. `domain
+          _name` alone is NOT unique (renewals overlap with the old certi
+          ficate).
+      23 +- `domain_name` is normalized with `.strip().lower()` in `save(
+         +)` AND in `clean()` (so admin form uniqueness validation sees t
+         +he normalized value, not just the DB layer).                   
+      24  - "Today" is ALWAYS `django.utils.timezone.localdate()`. Never 
+          `datetime.now()`, never naive datetimes, and never compare a `d
+          atetime` (`timezone.now()`) with the `DateField`.
+      25  - Remaining days = `(expiration_date - today).days` (negative o
+          nce expired).
+      26  - Boundary: `expiration_date == today` means 0 days left; the c
+          ertificate is valid until end of day and counts as "Yakında Dol
+          acak".
+
+● Update(CLAUDE.md)
+  ⎿  Added 4 lines
+      35  - `list_display`: domain_name, customer_name, expiration_date, 
+          days left, status.
+      36  - `list_filter`: expiration_date (and/or status-based filter), 
+          `search_fields`: domain_name, customer_name.
+      37  
+      38 +## Seed Data                                                   
+      39 +- Management command `seed_certificates` creates 4-5 sample cer
+         +tificates covering every state (expired, expires today, expirin
+         +g soon, valid). Dates are relative to `timezone.localdate()`. I
+         +dempotent: re-running must not create duplicates (`get_or_creat
+         +e`).                                                           
+      40 +- README documents it as an optional step so a fresh checkout s
+         +hows a populated table.                                        
+      41 +                                                               
+      42  ## Testing Standards
+      43  - Do not mock the clock. Pass `today=` explicitly into the mode
+          l methods; tests must never depend on the real date.
+      44  - Minimum 5 status tests; boundary set is mandatory: yesterday 
+          (-1), today (0), +29, +30, +31 days. Also cover far future and 
+          far past.
+
+● Update(CLAUDE.md)
+  ⎿  Added 1 line
+      43  - Do not mock the clock. Pass `today=` explicitly into the mode
+          l methods; tests must never depend on the real date.
+      44  - Minimum 5 status tests; boundary set is mandatory: yesterday 
+          (-1), today (0), +29, +30, +31 days. Also cover far future and 
+          far past.
+      45  - Add one view test: list page ordering by `expiration_date` an
+          d displayed status text.
+      46 +- Add a test that domain normalization (case/whitespace) preven
+         +ts duplicates.                                                 
+      47  - Add one test for `unique_together` behaviour (same domain, di
+          fferent date allowed; same pair rejected).
+      48  
+      49  ## README
+
+● Bash(python --version; python -m pip --version; python -m pip index versions
+      Django 2>/dev/null | head -2)
+  ⎿  (No output)
+
+● PowerShell(py -0p 2>&1 | Out-String)
+  ⎿   -V:3.13 *        C:\Users\Monster\AppData\Local\Programs\Python\Pytho
+     n313\python.exe
+      -V:3.10          C:\Users\Monster\AppData\Local\Programs\Python\Pytho
+     n310\python.exe
+
+● python komutu 3.10.0'a gidiyor, ama CLAUDE.md 3.11+ istiyor. Makinenizde 3.13
+  de kurulu, o yüzden venv'i 3.13 ile kuruyorum.
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            py -3.13 -m venv .venv…)
+  ⎿  [notice] A new release of pip is available: 24.3.1 -> 26.3
+     [notice] To update, run: C:\Users\Monster\Desktop\e-tugra_ssl-odev\.ve
+     nv\Scripts\python.exe -m pip install --upgrade pip
+     … +7 lines (ctrl+o to expand)
+  ⎿  (timeout 5m)
+
+● Şimdi settings.py ve .gitignore düzenlenecek.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(config\settings.py)
+  ⎿  Added 10 lines, removed 5 lines
+      10  https://docs.djangoproject.com/en/5.2/ref/settings/
+      11  """
+      12  
+      13 +import os                                                      
+      14  from pathlib import Path
+      15  
+      16  # Build paths inside the project like this: BASE_DIR / 'subdir'
+          .
+      17  BASE_DIR = Path(__file__).resolve().parent.parent
+      18  
+      19  
+      19 -# Quick-start development settings - unsuitable for production 
+      20 -# See https://docs.djangoproject.com/en/5.2/howto/deployment/ch
+         -ecklist/                                                       
+      20 +# Settings are read from environment variables. The defaults be
+         +low are                                                        
+      21 +# development-only conveniences; set real values for any other 
+         +environment.                                                   
+      22  
+      23  # SECURITY WARNING: keep the secret key used in production secr
+          et!
+      23 -SECRET_KEY = "django-insecure-u_i)!8gi6y(pu0o9ihmk*qrusk_z$5%l#
+         -$ql6*#u=oxh91m_c$"                                             
+      24 +SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-inse
+         +cure-key-change-me")                                           
+      25  
+      26  # SECURITY WARNING: don't run with debug turned on in productio
+          n!
+      26 -DEBUG = True                                                   
+      27 +DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in ("1",
+         + "true", "yes")                                                
+      28  
+      28 -ALLOWED_HOSTS = []                                             
+      29 +ALLOWED_HOSTS = [                                              
+      30 +    host.strip()                                               
+      31 +    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "").spli
+         +t(",")                                                         
+      32 +    if host.strip()                                            
+      33 +]                                                              
+      34  
+      35  
+      36  # Application definition
+
+● Update(config\settings.py)
+  ⎿  Added 1 line
+      42      "django.contrib.sessions",
+      43      "django.contrib.messages",
+      44      "django.contrib.staticfiles",
+      45 +    "certificates",                                            
+      46  ]
+      47  
+      48  MIDDLEWARE = [
+
+● Update(config\settings.py)
+  ⎿  Added 3 lines, removed 2 lines
+      108  # Internationalization
+      109  # https://docs.djangoproject.com/en/5.2/topics/i18n/
+      110  
+      111 -LANGUAGE_CODE = "en-us"                                       
+      111 +LANGUAGE_CODE = "tr"                                          
+      112  
+      113 -TIME_ZONE = "UTC"                                             
+      113 +# "Today" for certificate expiry is the Istanbul calendar day 
+          +(see CLAUDE.md).                                              
+      114 +TIME_ZONE = "Europe/Istanbul"                                 
+      115  
+      116  USE_I18N = True
+      117  
+
+● Write(.gitignore)
+  ⎿  Wrote 8 lines to .gitignore
+      1 .venv/
+      2 venv/
+      3 __pycache__/
+      4 *.pyc
+      5 db.sqlite3
+      6 .env
+      7 .idea/
+      8 .vscode/
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            .\.venv\Scripts\python manage.py check…)
+  ⎿  System check identified no issues (0 silenced).
+     6 objects imported automatically (use -v 2 for details).
+
+     Europe/Istanbul True 2026-11-11
+
+● Adım 1 (iskelet) tamam. Kendi terminalinizde doğrulamak için aşağıdaki
+  adımları sırayla çalıştırın.
+
+  Yaptıklarım
+
+  - CLAUDE.md: Domain normalizasyonu (save() ve clean()), seed komutu ve
+    normalizasyon testi eklendi.
+  - Sanal ortam: .venv Python 3.13 ile kuruldu.
+  - requirements.txt: Django>=5.2,<5.3 yazıldı. Kurulan sürüm 5.2.19.
+  - Proje ve uygulama: config projesi ve certificates uygulaması oluşturuldu.
+  - settings.py: certificates uygulaması eklendi. TIME_ZONE='Europe/Istanbul',
+    LANGUAGE_CODE='tr' ve USE_TZ=True ayarlandı. SECRET_KEY, DEBUG ve
+    ALLOWED_HOSTS ortam değişkenlerinden okunuyor. Varsayılanlar yalnızca
+    geliştirme içindir.
+  - .gitignore: .venv, db.sqlite3, .env ve __pycache__ eklendi.
+  - Kontrol: manage.py check hatasız geçti. localdate() bugünü İstanbul saatine
+    göre 2026-11-11 olarak döndürdü.
+
+  Sizin doğrulamanız için terminal adımları
+
+  Proje klasöründe PowerShell açın:
+
+  cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+  .\.venv\Scripts\Activate.ps1
+
+  (Script çalıştırma hatası alırsanız önce Set-ExecutionPolicy -Scope
+  CurrentUser RemoteSigned çalıştırın.)
+
+  python --version          # 3.13.x görmelisiniz (3.10 görüyorsanız venv aktif
+  değil)
+  python -m django --version  # 5.2.19
+  python manage.py check    # "no issues"
+  python manage.py runserver
+
+  Tarayıcıda http://127.0.0.1:8000 açılırsa roket sayfası gelir (henüz model ve
+  view yok). Ctrl+C ile durdurun.
+
+  Dikkat edilecekler
+
+  - Python sürümü: Sisteminizde python komutu 3.10.0'a gidiyor, 3.13 ise
+    yalnızca py -3.13 ile çalışıyor. Hep .venv içinden çalıştırın. README'de de
+    bunu belirteceğim.
+  - Admin ile normalizasyon: Admin formu, save() çalışmadan önce unique_together
+    kontrolü yapar. Bu yüzden normalizasyonu clean() içine de koyduk. Aksi
+    halde Example.com ile example.com formu geçer ve veritabanında hata verirdi.
+    Bunu 2. adımda yapacağım.
+
+  Onayınızı verirseniz 2. adıma (model) ve ardından 3. adıma (testler)
+  geçiyorum.
+
+> 1.adımı terminalde test ettim Django 5.2 sorunsuz ayağa kalktı, roket
+  sayfasını gördüm ve commit'i attım.
+  özellikle admin tarafında form validasyonunda çıkabilecek çakışmayı öngörüp
+  domain normalizasyonunu "clean()" içine de dahil etme detayını iyi
+  düşünmüşsünn.
+
+  Şimdi plana uygun olarak 2. adıma (Certificate modeli, field'lar vs. ) ve
+  ardından 3. adıma (model ve sınır testleri) geçebiliriz.
+  Gerekli dosyaları oluşturduktan sonra migration ve test çalıştırma
+  komutlarını çalıştırıp çıktıları kısaca raporla, ayrıca bu test çalıştırma
+  komutlarını benimle de paylaş ki terminalde test edip onay vereyimm.
+
+● Write(certificates\models.py)
+  ⎿  Added 59 lines, removed 1 line
+       1 +from datetime import date                                      
+       2 +                                                               
+       3  from django.db import models
+       4 +from django.utils import timezone                              
+       5  
+       3 -# Create your models here.                                     
+       6 +# Single source of truth for the warning window (see CLAUDE.md)
+         +.                                                              
+       7 +EXPIRY_WARNING_DAYS = 30                                       
+       8 +                                                               
+       9 +# Status labels are defined once and reused by admin, templates
+         + and tests.                                                    
+      10 +STATUS_EXPIRED = "Süresi Dolmuş"                               
+      11 +STATUS_EXPIRING_SOON = "Yakında Dolacak"                       
+      12 +STATUS_VALID = "Geçerli"                                       
+      13 +                                                               
+      14 +                                                               
+      15 +class Certificate(models.Model):                               
+      16 +    domain_name = models.CharField("alan adı", max_length=255) 
+      17 +    customer_name = models.CharField("müşteri adı", max_length=
+         +255)                                                           
+      18 +    # Calendar day in Europe/Istanbul. The certificate is valid
+         + through the                                                   
+      19 +    # end of this day, so expiration_date == today means 0 days
+         + left.                                                         
+      20 +    expiration_date = models.DateField("bitiş tarihi", db_index
+         +=True)                                                         
+      21 +                                                               
+      22 +    class Meta:                                                
+      23 +        ordering = ["expiration_date"]                         
+      24 +        # A renewal may overlap the old certificate, so the dom
+         +ain alone is                                                   
+      25 +        # not unique; the (domain, date) pair is.              
+      26 +        unique_together = [("domain_name", "expiration_date")] 
+      27 +        verbose_name = "sertifika"                             
+      28 +        verbose_name_plural = "sertifikalar"                   
+      29 +                                                               
+      30 +    def __str__(self):                                         
+      31 +        return f"{self.domain_name} ({self.expiration_date})"  
+      32 +                                                               
+      33 +    def _normalize_domain(self):                               
+      34 +        self.domain_name = (self.domain_name or "").strip().low
+         +er()                                                           
+      35 +                                                               
+      36 +    def clean(self):                                           
+      37 +        # Runs before validate_unique() in ModelForm/admin vali
+         +dation, so the                                                 
+      38 +        # uniqueness check sees the normalized value, not the r
+         +aw input.                                                      
+      39 +        self._normalize_domain()                               
+      40 +        super().clean()                                        
+      41 +                                                               
+      42 +    def save(self, *args, **kwargs):                           
+      43 +        # Covers saves that bypass form validation (shell, seed
+         +, fixtures).                                                   
+      44 +        self._normalize_domain()                               
+      45 +        super().save(*args, **kwargs)                          
+      46 +                                                               
+      47 +    @staticmethod                                              
+      48 +    def _resolve_today(today: date | None) -> date:            
+      49 +        return timezone.localdate() if today is None else today
+      50 +                                                               
+      51 +    def days_left(self, today: date | None = None) -> int:     
+      52 +        """Whole days until expiration; negative once expired."
+         +""                                                             
+      53 +        return (self.expiration_date - self._resolve_today(toda
+         +y)).days                                                       
+      54 +                                                               
+      55 +    def status(self, today: date | None = None) -> str:        
+      56 +        days = self.days_left(today)                           
+      57 +        if days < 0:                                           
+      58 +            return STATUS_EXPIRED                              
+      59 +        if days <= EXPIRY_WARNING_DAYS:                        
+      60 +            return STATUS_EXPIRING_SOON                        
+      61 +        return STATUS_VALID                                    
+● Write(certificates\tests.py)
+  ⎿  Added 135 lines, removed 2 lines
+        1 -from django.test import TestCase                              
+        1 +from datetime import date, timedelta                          
+        2  
+        3 -# Create your tests here.                                     
+        3 +from django.core.exceptions import ValidationError            
+        4 +from django.db import IntegrityError, transaction             
+        5 +from django.test import SimpleTestCase, TestCase              
+        6 +                                                              
+        7 +from .models import (                                         
+        8 +    EXPIRY_WARNING_DAYS,                                      
+        9 +    STATUS_EXPIRED,                                           
+       10 +    STATUS_EXPIRING_SOON,                                     
+       11 +    STATUS_VALID,                                             
+       12 +    Certificate,                                              
+       13 +)                                                             
+       14 +                                                              
+       15 +# A fixed "today" is passed explicitly; tests never depend on 
+          +the real clock.                                               
+       16 +TODAY = date(2026, 6, 15)                                     
+       17 +                                                              
+       18 +                                                              
+       19 +def make_cert(offset_days, domain="example.com"):             
+       20 +    """Unsaved certificate expiring `offset_days` from TODAY."
+          +""                                                            
+       21 +    return Certificate(                                       
+       22 +        domain_name=domain,                                   
+       23 +        customer_name="Test Müşteri",                         
+       24 +        expiration_date=TODAY + timedelta(days=offset_days),  
+       25 +    )                                                         
+       26 +                                                              
+       27 +                                                              
+       28 +class StatusBoundaryTests(SimpleTestCase):                    
+       29 +    def test_warning_window_constant_is_30(self):             
+       30 +        self.assertEqual(EXPIRY_WARNING_DAYS, 30)             
+       31 +                                                              
+       32 +    def test_yesterday_is_expired(self):                      
+       33 +        cert = make_cert(-1)                                  
+       34 +        self.assertEqual(cert.days_left(TODAY), -1)           
+       35 +        self.assertEqual(cert.status(TODAY), STATUS_EXPIRED)  
+       36 +                                                              
+       37 +    def test_today_is_expiring_soon_with_zero_days_left(self):
+       38 +        cert = make_cert(0)                                   
+       39 +        self.assertEqual(cert.days_left(TODAY), 0)            
+       40 +        self.assertEqual(cert.status(TODAY), STATUS_EXPIRING_S
+          +OON)                                                          
+       41 +                                                              
+       42 +    def test_29_days_is_expiring_soon(self):                  
+       43 +        cert = make_cert(EXPIRY_WARNING_DAYS - 1)             
+       44 +        self.assertEqual(cert.days_left(TODAY), 29)           
+       45 +        self.assertEqual(cert.status(TODAY), STATUS_EXPIRING_S
+          +OON)                                                          
+       46 +                                                              
+       47 +    def test_exactly_30_days_is_still_expiring_soon(self):    
+       48 +        cert = make_cert(EXPIRY_WARNING_DAYS)                 
+       49 +        self.assertEqual(cert.days_left(TODAY), 30)           
+       50 +        self.assertEqual(cert.status(TODAY), STATUS_EXPIRING_S
+          +OON)                                                          
+       51 +                                                              
+       52 +    def test_31_days_is_valid(self):                          
+       53 +        cert = make_cert(EXPIRY_WARNING_DAYS + 1)             
+       54 +        self.assertEqual(cert.days_left(TODAY), 31)           
+       55 +        self.assertEqual(cert.status(TODAY), STATUS_VALID)    
+       56 +                                                              
+       57 +    def test_far_future_is_valid(self):                       
+       58 +        self.assertEqual(make_cert(3650).status(TODAY), STATUS
+          +_VALID)                                                       
+       59 +                                                              
+       60 +    def test_far_past_is_expired_with_negative_days(self):    
+       61 +        cert = make_cert(-3650)                               
+       62 +        self.assertEqual(cert.days_left(TODAY), -3650)        
+       63 +        self.assertEqual(cert.status(TODAY), STATUS_EXPIRED)  
+       64 +                                                              
+       65 +    def test_default_today_uses_real_local_date(self):        
+       66 +        # today=None must fall back to timezone.localdate(); a
+          + cert far in the                                              
+       67 +        # future/past is stable regardless of when the suite r
+          +uns.                                                          
+       68 +        self.assertEqual(make_cert(0).status(date(2000, 1, 1))
+          +, STATUS_VALID)                                               
+       69 +        far_future = Certificate(                             
+       70 +            domain_name="a.com", customer_name="x", expiration
+          +_date=date(2999, 1, 1)                                        
+       71 +        )                                                     
+       72 +        far_past = Certificate(                               
+       73 +            domain_name="a.com", customer_name="x", expiration
+          +_date=date(2000, 1, 1)                                        
+       74 +        )                                                     
+       75 +        self.assertEqual(far_future.status(), STATUS_VALID)   
+       76 +        self.assertEqual(far_past.status(), STATUS_EXPIRED)   
+       77 +                                                              
+       78 +                                                              
+       79 +class DomainNormalizationTests(TestCase):                     
+       80 +    def test_save_strips_and_lowercases_domain(self):         
+       81 +        cert = Certificate.objects.create(                    
+       82 +            domain_name="  Example.COM  ",                    
+       83 +            customer_name="Müşteri",                          
+       84 +            expiration_date=TODAY,                            
+       85 +        )                                                     
+       86 +        cert.refresh_from_db()                                
+       87 +        self.assertEqual(cert.domain_name, "example.com")     
+       88 +                                                              
+       89 +    def test_clean_normalizes_domain(self):                   
+       90 +        cert = make_cert(5, domain="  WWW.Example.Com ")      
+       91 +        cert.clean()                                          
+       92 +        self.assertEqual(cert.domain_name, "www.example.com") 
+       93 +                                                              
+       94 +    def test_form_validation_catches_case_and_whitespace_dupli
+          +cate(self):                                                   
+       95 +        Certificate.objects.create(                           
+       96 +            domain_name="example.com", customer_name="A", expi
+          +ration_date=TODAY                                             
+       97 +        )                                                     
+       98 +        duplicate = Certificate(                              
+       99 +            domain_name=" Example.COM ", customer_name="B", ex
+          +piration_date=TODAY                                           
+      100 +        )                                                     
+      101 +        # full_clean() is what ModelForm/admin runs: clean() -
+          +> validate_unique().                                          
+      102 +        with self.assertRaises(ValidationError):              
+      103 +            duplicate.full_clean()                            
+      104 +                                                              
+      105 +                                                              
+      106 +class UniquenessTests(TestCase):                              
+      107 +    def test_same_domain_different_date_is_allowed(self):     
+      108 +        Certificate.objects.create(                           
+      109 +            domain_name="example.com", customer_name="A", expi
+          +ration_date=TODAY                                             
+      110 +        )                                                     
+      111 +        Certificate.objects.create(                           
+      112 +            domain_name="example.com",                        
+      113 +            customer_name="A",                                
+      114 +            expiration_date=TODAY + timedelta(days=365),      
+      115 +        )                                                     
+      116 +        self.assertEqual(Certificate.objects.filter(domain_nam
+          +e="example.com").count(), 2)                                  
+      117 +                                                              
+      118 +    def test_same_domain_and_date_is_rejected_at_db_level(self
+          +):                                                            
+      119 +        Certificate.objects.create(                           
+      120 +            domain_name="example.com", customer_name="A", expi
+          +ration_date=TODAY                                             
+      121 +        )                                                     
+      122 +        with self.assertRaises(IntegrityError), transaction.at
+          +omic():                                                       
+      123 +            Certificate.objects.create(                       
+      124 +                domain_name="EXAMPLE.com", customer_name="B", 
+          +expiration_date=TODAY                                         
+      125 +            )                                                 
+      126 +                                                              
+      127 +                                                              
+      128 +class OrderingTests(TestCase):                                
+      129 +    def test_default_ordering_is_by_expiration_date(self):    
+      130 +        later = Certificate.objects.create(                   
+      131 +            domain_name="b.com", customer_name="x", expiration
+          +_date=TODAY + timedelta(days=10)                              
+      132 +        )                                                     
+      133 +        earlier = Certificate.objects.create(                 
+      134 +            domain_name="a.com", customer_name="x", expiration
+          +_date=TODAY - timedelta(days=10)                              
+      135 +        )                                                     
+      136 +        self.assertEqual(list(Certificate.objects.all()), [ear
+          +lier, later])                                                 
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            .\.venv\Scripts\python manage.py makemigrations certificates…)
+  ⎿  Migrations for 'certificates':
+       certificates\migrations\0001_initial.py
+         + Create model Certificate
+     … +90 lines (ctrl+o to expand)
+  ⎿  (timeout 3m)
+
+● Bir testte gereksiz ve kafa karıştıran bir satır var. Onu temizleyip testleri
+  yeniden çalıştırıyorum.
+
+● Update(certificates\tests.py)
+  ⎿  Added 2 lines, removed 3 lines
+      63          self.assertEqual(cert.status(TODAY), STATUS_EXPIRED)
+      64  
+      65      def test_default_today_uses_real_local_date(self):
+      66 -        # today=None must fall back to timezone.localdate(); a 
+         -cert far in the                                                
+      67 -        # future/past is stable regardless of when the suite ru
+         -ns.                                                            
+      68 -        self.assertEqual(make_cert(0).status(date(2000, 1, 1)),
+         - STATUS_VALID)                                                 
+      66 +        # today=None must fall back to timezone.localdate(); ce
+         +rts in the                                                     
+      67 +        # year 2999 / 2000 give a stable result whenever the su
+         +ite runs.                                                      
+      68          far_future = Certificate(
+      69              domain_name="a.com", customer_name="x", expiration_
+          date=date(2999, 1, 1)
+      70          )
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            .\.venv\Scripts\python manage.py makemigrations --check --dry-run…)
+  ⎿  No changes detected
+     Destroying test database for alias 'default'...
+     Found 15 test(s).
+     System check identified no issues (0 silenced).
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            cmd /c ".venv\Scripts\python manage.py test 2>&1")
+  ⎿  Creating test database for alias 'default'...
+     ...............
+     ----------------------------------------------------------------------
+     … +6 lines (ctrl+o to expand)
+
+● Adım 2 (model ve migration) ile adım 3 (testler) tamam. Migration uygulandı ve
+  15 testin 15'i geçti. Düzenlemeden sonra testleri bir kez daha çalıştırdım,
+  sonuç aynı.
+
+  Yazdıklarım
+
+  - Model: certificates/models.py
+    - Certificate modelinde domain_name, customer_name ve expiration_date
+      (DateField, db_index=True) alanları var.
+    - Meta.ordering bitiş tarihine göre sıralıyor. unique_together (domain_name,
+      expiration_date) çiftine uygulandı.
+    - EXPIRY_WARNING_DAYS ve Türkçe durum etiketleri modül düzeyinde sabit.
+    - days_left(today=None) ve status(today=None) metotları duruma karar
+      veriyor.
+    - clean() ve save() alan adını strip().lower() ile normalize ediyor.
+  - Migration: 0001_initial.py (certificates/migrations/0001_initial.py)
+    oluşturuldu. makemigrations --check bekleyen değişiklik görmüyor.
+  - Testler: certificates/tests.py
+
+  ┌────────────────────┬────────────────────────────────────────────────────┐
+  │        Grup        │                       Kapsam                       │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Durum sınırları (9 │ −1, 0, +29, +30, +31, çok uzak gelecek, çok uzak   │
+  │  test)             │ geçmiş, today=None varsayılanı, sabit = 30         │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Normalizasyon (3   │ save(), clean() ve full_clean() ile " Example.COM  │
+  │ test)              │ " kopyasının yakalanması                           │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Benzersizlik (2    │ Aynı domain farklı tarih serbest, aynı çift DB     │
+  │ test)              │ seviyesinde reddediliyor                           │
+  ├────────────────────┼────────────────────────────────────────────────────┤
+  │ Sıralama (1 test)  │ Varsayılan sıra bitiş tarihine göre                │
+  └────────────────────┴────────────────────────────────────────────────────┘
+
+  Bütün testler tarihi today= ile kendileri veriyor, gerçek saate bağlı
+  değiller.
+
+  Terminalde doğrulamanız için
+
+  cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+  .\.venv\Scripts\Activate.ps1
+
+  python manage.py makemigrations --check --dry-run   # "No changes detected"
+  python manage.py migrate                             #
+  certificates.0001_initial uygulanır
+  python manage.py test -v 2                           # 15 test, "OK"
+  python manage.py test certificates.tests.StatusBoundaryTests   # yalnızca
+  sınır testleri
+
+  Not
+
+  - PowerShell çıktısı: Test komutunun çıktısını PowerShell'de | Select-Object
+    gibi bir boruya verirseniz Django bilgi mesajlarını stderr'e yazdığı için
+    "NativeCommandError" benzeri kırmızı bir uyarı görebilirsiniz. Testler yine
+    de geçmiş olur. Sonuç satırı Ran 15 tests ... OK olmalı.
+  - Commit: Ben commit atmadım. Sıra sizde.
+
+  4. adıma (admin) geçmeye hazırım.
+
+> 15 testin tamamı başarıyla geçti, sınır senaryoları ve domain normalizasyonu
+  tam istediğimiz gibi çalışıyor
+  Şimdi plana uygun olarak Adım 4 (admin yapılandırması) ve Adım 5'e (ListView,
+  URL routing vs.) geçebiliriz.
+
+  1. Admin tarafında sertifikaları listelerken durum ve kalan gün de görünsün.
+  Arama ve filtre de ekleyelim ki kayıtlar çoğalınca rahat yönetilsin.
+  2. Liste sayfası için de basit bir sayfa kuralım; sertifikalar bitiş tarihine
+  göre sıralı gelsin. Kalan gün ve durumu tabloda görelim. Durumlar için de
+  basit renkler (kırmızı, sarı/turuncu, yeşil yani  minimal badge/etiket
+  renkleri ) verelim ki ilk bakışta hemen anlaşılsın. Tasarımı kasmayalım,
+  temiz ama modern bir HTML tablosu ve temel CSS yeterli
+
+  dosyaları oluşturduktan sonra sayfayı tarayıcıda incelemem için URL bilgisini
+  ve gerekiyorsa view test komutunu ilet.
+
+● Write(certificates\admin.py)
+  ⎿  Added 63 lines, removed 1 line
+       1 +from datetime import timedelta                                 
+       2 +                                                               
+       3  from django.contrib import admin
+       4 +from django.utils import timezone                              
+       5  
+       3 -# Register your models here.                                   
+       6 +from .models import (                                          
+       7 +    EXPIRY_WARNING_DAYS,                                       
+       8 +    STATUS_EXPIRED,                                            
+       9 +    STATUS_EXPIRING_SOON,                                      
+      10 +    STATUS_VALID,                                              
+      11 +    Certificate,                                               
+      12 +)                                                              
+      13 +                                                               
+      14 +                                                               
+      15 +class StatusListFilter(admin.SimpleListFilter):                
+      16 +    """Filter by computed status.                              
+      17 +                                                               
+      18 +    The status itself is computed by Certificate.status(); a da
+         +tabase filter                                                  
+      19 +    cannot call Python, so this translates the same thresholds 
+      20 +    (EXPIRY_WARNING_DAYS) into date ranges. Tests assert both s
+         +tay in sync.                                                   
+      21 +    """                                                        
+      22 +                                                               
+      23 +    title = "durum"                                            
+      24 +    parameter_name = "durum"                                   
+      25 +                                                               
+      26 +    def lookups(self, request, model_admin):                   
+      27 +        return [                                               
+      28 +            ("expired", STATUS_EXPIRED),                       
+      29 +            ("soon", STATUS_EXPIRING_SOON),                    
+      30 +            ("valid", STATUS_VALID),                           
+      31 +        ]                                                      
+      32 +                                                               
+      33 +    def queryset(self, request, queryset):                     
+      34 +        today = timezone.localdate()                           
+      35 +        limit = today + timedelta(days=EXPIRY_WARNING_DAYS)    
+      36 +        if self.value() == "expired":                          
+      37 +            return queryset.filter(expiration_date__lt=today)  
+      38 +        if self.value() == "soon":                             
+      39 +            return queryset.filter(expiration_date__gte=today, 
+         +expiration_date__lte=limit)                                    
+      40 +        if self.value() == "valid":                            
+      41 +            return queryset.filter(expiration_date__gt=limit)  
+      42 +        return queryset                                        
+      43 +                                                               
+      44 +                                                               
+      45 +@admin.register(Certificate)                                   
+      46 +class CertificateAdmin(admin.ModelAdmin):                      
+      47 +    list_display = (                                           
+      48 +        "domain_name",                                         
+      49 +        "customer_name",                                       
+      50 +        "expiration_date",                                     
+      51 +        "days_left_display",                                   
+      52 +        "status_display",                                      
+      53 +    )                                                          
+      54 +    list_filter = (StatusListFilter, "expiration_date")        
+      55 +    search_fields = ("domain_name", "customer_name")           
+      56 +    ordering = ("expiration_date",)                            
+      57 +    date_hierarchy = None                                      
+      58 +                                                               
+      59 +    @admin.display(description="Kalan gün", ordering="expiratio
+         +n_date")                                                       
+      60 +    def days_left_display(self, obj):                          
+      61 +        return obj.days_left()                                 
+      62 +                                                               
+      63 +    @admin.display(description="Durum", ordering="expiration_da
+         +te")                                                           
+      64 +    def status_display(self, obj):                             
+      65 +        return obj.status()                                    
+
+● Write(certificates\views.py)
+  ⎿  Added 37 lines, removed 2 lines
+       1 -from django.shortcuts import render                            
+       1 +from django.utils import timezone                              
+       2 +from django.views.generic import ListView                      
+       3  
+       3 -# Create your views here.                                      
+       4 +from .models import STATUS_EXPIRED, STATUS_EXPIRING_SOON, Certi
+         +ficate                                                         
+       5 +                                                               
+       6 +# Presentation only: maps a status label to a CSS badge class. 
+       7 +BADGE_CLASSES = {                                              
+       8 +    STATUS_EXPIRED: "badge-expired",                           
+       9 +    STATUS_EXPIRING_SOON: "badge-soon",                        
+      10 +}                                                              
+      11 +DEFAULT_BADGE_CLASS = "badge-valid"                            
+      12 +                                                               
+      13 +                                                               
+      14 +class CertificateListView(ListView):                           
+      15 +    """Public list (intentional, see README), ordered by expira
+         +tion date."""                                                  
+      16 +                                                               
+      17 +    model = Certificate                                        
+      18 +    template_name = "certificates/certificate_list.html"       
+      19 +    context_object_name = "certificates"                       
+      20 +                                                               
+      21 +    def get_queryset(self):                                    
+      22 +        return Certificate.objects.order_by("expiration_date", 
+         +"domain_name")                                                 
+      23 +                                                               
+      24 +    def get_context_data(self, **kwargs):                      
+      25 +        context = super().get_context_data(**kwargs)           
+      26 +        # "Today" is evaluated once so every row is consistent.
+      27 +        today = timezone.localdate()                           
+      28 +        context["today"] = today                               
+      29 +        context["rows"] = [                                    
+      30 +            {                                                  
+      31 +                "certificate": cert,                           
+      32 +                "days_left": cert.days_left(today),            
+      33 +                "status": (status := cert.status(today)),      
+      34 +                "badge_class": BADGE_CLASSES.get(status, DEFAUL
+         +T_BADGE_CLASS),                                                
+      35 +            }                                                  
+      36 +            for cert in context["certificates"]                
+      37 +        ]                                                      
+      38 +        return context                                         
+
+● Write(certificates\urls.py)
+  ⎿  Wrote 9 lines to certificates\urls.py
+      1 from django.urls import path
+      2
+      3 from .views import CertificateListView
+      4
+      5 app_name = "certificates"
+      6
+      7 urlpatterns = [
+      8     path("", CertificateListView.as_view(), name="list"),
+      9 ]
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(config\urls.py)
+  ⎿  Added 2 lines, removed 1 line
+      16  """
+      17  
+      18  from django.contrib import admin
+      19 -from django.urls import path                                   
+      19 +from django.urls import include, path                          
+      20  
+      21  urlpatterns = [
+      22      path("admin/", admin.site.urls),
+      23 +    path("", include("certificates.urls")),                    
+      24  ]
+
+● Update(certificates\admin.py)
+  ⎿  Removed 1 line
+      54      list_filter = (StatusListFilter, "expiration_date")
+      55      search_fields = ("domain_name", "customer_name")
+      56      ordering = ("expiration_date",)
+      57 -    date_hierarchy = None                                      
+      57  
+      58      @admin.display(description="Kalan gün", ordering="expiratio
+          n_date")
+      59      def days_left_display(self, obj):
+
+● Write(certificates\templates\certificates\certificate_list.html)
+  ⎿  Wrote 73 lines to
+     certificates\templates\certificates\certificate_list.html
+       1 <!doctype html>
+       2 <html lang="tr">
+       3 <head>
+       4   <meta charset="utf-8">
+       5   <meta name="viewport" content="width=device-width, initial-sca
+         le=1">
+       6   <title>SSL Sertifika Takibi</title>
+       7   <style>
+       8     :root {
+       9       --bg: #f5f7fa; --card: #fff; --text: #1f2937; --muted: #6b
+     … +65 lines (~3 KB) (ctrl+o to expand)
+
+● Bash(cat >> certificates/tests.py <<'EOF'…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 2m)
+
+  Read 1 file (ctrl+o to expand)
+
+● Stop Task
+  ⎿  cat >> certificates/tests.py <<'EOF'… · stopped
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            cmd /c ".venv\Scripts\python manage.py test 2>&1")
+  ⎿  Creating test database for alias 'default'...
+     .......................
+     ----------------------------------------------------------------------
+     … +6 lines (ctrl+o to expand)
+
+● Adım 4 (admin) ve adım 5 (liste sayfası) hazır, 23 testin hepsi geçiyor.
+  Önceki 15 teste 8 yeni test eklendi: 4 view testi ve 4 admin testi.
+
+  Yazdıklarım
+
+  - Admin: certificates/admin.py
+    - Liste: Alan adı, müşteri, bitiş tarihi, kalan gün ve durum görünüyor.
+    - Arama ve filtre: Alan adı ve müşteri adında arama var. Durum filtresi
+      (Süresi Dolmuş, Yakında Dolacak, Geçerli) ile bitiş tarihi filtresi de
+      eklendi.
+    - Filtre tutarlılığı: Durum filtresi veritabanında çalıştığı için
+      EXPIRY_WARNING_DAYS sabitini tarih aralığına çeviriyor. Bir test,
+      filtrenin her sınırda (−1, 0, 29, 30, 31 gün) status() ile aynı sonucu
+      verdiğini doğruluyor.
+  - Liste sayfası:
+    - Görünüm: views.py (certificates/views.py) sertifikaları bitiş tarihine
+      göre sıralı getiriyor. "Bugün" bir kez hesaplanıyor, böylece bütün
+      satırlar tutarlı oluyor. Şablon
+      (certificates/templates/certificates/certificate_list.html) kırmızı,
+      turuncu ve yeşil rozetli, temiz bir tablo çiziyor. Telefonda tablo yatay
+      kayıyor. Kayıt yoksa "Henüz sertifika kaydı yok" mesajı çıkıyor.
+    - Yönlendirme: certificates/urls.py oluşturuldu. config/urls.py sayfayı kök
+      adrese (/) bağlıyor.
+  - View testleri: Sıralama, durum metni, kalan gün, rozet sınıfı ve boş durum
+    test ediliyor. Sayfanın girişsiz açıldığı da test ediliyor.
+  - Not: İlk test denemem arka planda takıldı. Nedeni test kodu değil, benim
+    kullandığım bash boru hattıydı. PowerShell'de sorunsuz çalıştı.
+
+  Tarayıcıda incelemeniz için
+
+  cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+  .\.venv\Scripts\Activate.ps1
+  python manage.py migrate
+  python manage.py createsuperuser     # kullanıcı adı ve şifre belirleyin
+  python manage.py runserver
+
+  - Liste sayfası: http://127.0.0.1:8000/
+  - Admin paneli: http://127.0.0.1:8000/admin/
+
+  Seed komutu henüz yok, o yüzden liste ilk açılışta boş görünür. Admin'den
+  birkaç kayıt ekleyebilirsiniz. Şu bitiş tarihleri üç durumu da gösterir:
+
+  ┌──────────────────────┬───────────────────────────────────────┐
+  │     Bitiş tarihi     │            Beklenen durum             │
+  ├──────────────────────┼───────────────────────────────────────┤
+  │ Geçmiş bir tarih     │ Kırmızı, Süresi Dolmuş                │
+  ├──────────────────────┼───────────────────────────────────────┤
+  │ Bugün                │ Turuncu, Yakında Dolacak, kalan gün 0 │
+  ├──────────────────────┼───────────────────────────────────────┤
+  │ Birkaç hafta sonrası │ Turuncu                               │
+  ├──────────────────────┼───────────────────────────────────────┤
+  │ Birkaç ay sonrası    │ Yeşil                                 │
+  └──────────────────────┴───────────────────────────────────────┘
+
+  Ayrıca admin'de Example.COM  gibi büyük harfli ve boşluklu bir alan adı girip
+  aynı tarihle tekrar eklemeyi deneyin. Form hata vermeli.
+
+  python manage.py test                                   # 23 test, OK
+  python manage.py test certificates.tests.CertificateListViewTests   # yalnızca
+  view testleri
+  python manage.py test certificates.tests.CertificateAdminTests      # yalnızca
+  admin testleri
+
+  Onayınızdan sonra seed komutunu (seed_certificates) ve README'yi yazıp 6. ve
+  7. adımlara geçebilirim.
+
+> Admin paneline ve liste sayfasına tarayıcıdan baktım, boş durum mesajı ve
+  tarih alanı tertemiz çalışıyor. 23 testin hepsi geçti, adımların commit'ini
+  de aldım, şimdi projenin son adımlarına (Adım 6 ve 7'ye) geçelim
+  1. 'seed_certificates' adında bir management command yazalım. farklı
+  durumları görebilmemiz için veritabanına 4-5 tane mantıklı örnek sertifika
+  atsın (süresi dolmuş, bugün biten , 15 gün sonra biten,30 gün sonra biten, 60
+  gün sonra biten )
+  2. README dosyasını hazırlayalım. Projenin ne olduğu, kurulum ve venv
+  adımları, testlerin nasıl koşulacağı ve mailde özellikle istenen "AI ile
+  çalışma notu" bölümü kısa ve net yanıtlarla yer alsın.
+
+  Hazırlayınca seed komutunu nasıl çalıştıracağımı ve kontrol adımlarını yaz,
+  son kez bakalım.
+
+● Bash(mkdir -p certificates/management/commands && touch
+      certificates/management/__init__.py
+      certificates/management/commands/__init__.py && ls
+      certificates/managemen…)
+  ⎿  (No output)
+
+● Write(certificates\management\commands\seed_certificates.py)
+  ⎿  Wrote 47 lines to
+     certificates\management\commands\seed_certificates.py
+       1 from datetime import timedelta
+       2
+       3 from django.core.management.base import BaseCommand
+       4 from django.db import transaction
+       5 from django.utils import timezone
+       6
+       7 from certificates.models import Certificate
+       8
+       9 # (domain, customer, days from today). Reserved example domains
+         only, so the
+     … +38 lines (ctrl+o to expand)
+
+  Read 1 file (ctrl+o to expand)
+● Write(README.md)
+  ⎿  Wrote 91 lines to README.md
+       1 # SSL Sertifika Takibi
+       2
+       3 Müşterilerin SSL sertifikalarının bitiş tarihlerini takip eden b
+         asit bir Django uygulaması.
+       4
+       5 - Sertifikalar (alan adı, müşteri adı, bitiş tarihi) Django admi
+         n panelinden eklenir ve düzenlenir.
+       6 - Ana sayfa tüm sertifikaları bitiş tarihine göre sıralı listele
+         r; her satırda **kalan gün** ve **durum** görünür.
+       7
+     … +84 lines (ctrl+o to expand)
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            .\.venv\Scripts\python manage.py makemigrations --check --dry-run…)
+  ⎿  No changes detected
+     Creating test database for alias 'default'...
+     .........................
+     … +19 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Adım 6 (seed komutu ve README) hazır, ama README'deki "AI ile çalışma notu"
+  bölümünü mailin sorularına göre kontrol etmeniz gerekiyor. 25 testin hepsi
+  geçti, bekleyen migration yok.
+
+  Yazdıklarım
+
+  - Seed komutu: seed_certificates.py
+    (certificates/management/commands/seed_certificates.py) bugüne göre 5 kayıt
+    ekliyor:
+
+  ┌─────────────────────┬─────────┬───────────┬─────────────────────────┐
+  │      Alan adı       │  Bitiş  │ Kalan gün │          Durum          │
+  ├─────────────────────┼─────────┼───────────┼─────────────────────────┤
+  │ expired.example.com │ −10 gün │ −10       │ Süresi Dolmuş           │
+  ├─────────────────────┼─────────┼───────────┼─────────────────────────┤
+  │ today.example.com   │ bugün   │ 0         │ Yakında Dolacak         │
+  ├─────────────────────┼─────────┼───────────┼─────────────────────────┤
+  │ soon.example.com    │ +15 gün │ 15        │ Yakında Dolacak         │
+  ├─────────────────────┼─────────┼───────────┼─────────────────────────┤
+  │ limit.example.com   │ +30 gün │ 30        │ Yakında Dolacak (sınır) │
+  ├─────────────────────┼─────────┼───────────┼─────────────────────────┤
+  │ valid.example.com   │ +60 gün │ 60        │ Geçerli                 │
+  └─────────────────────┴─────────┴───────────┴─────────────────────────┘
+
+  - Tekrar çalıştırma: Tarihler bugüne göre değiştiği için get_or_create ertesi
+    gün kopya üretirdi. Bu yüzden komut her çalışmada yalnızca kendi
+    *.example.com kayıtlarını silip yeniden oluşturuyor. Diğer kayıtlara
+    dokunmuyor.
+  - Testler: İki test ekledim: tekrar çalıştırılınca kopya oluşmaması ve başka
+    kayıtların korunması.
+  - README: README.md projenin ne olduğunu, durum kurallarını, kurulum ve venv
+    adımlarını (Windows ve Mac/Linux), çalıştırmayı, seed ve testleri, ortam
+    değişkenlerini ve "herkese açık sayfa" notunu içeriyor.
+
+  Ben komutları çalıştırdım, sonuçlar yukarıdaki tablodaki gibi çıktı. Seed'i
+  iki kez çalıştırdım. İkincisi "yenilenen eski örnek: 5" dedi ve kopya
+  oluşmadı.
+
+  AI notu hakkında
+
+  Mailin tam sorularını görmedim. Bölümü bu konuşmadan gerçekten bildiğim
+  bilgilerle yazdım: araç, süreç, kimin neyi karar verdiği, nasıl doğrulandığı
+  ve yakalanan sorunlar. Mailde belirli sorular varsa (ör. "AI'ın yanlış yaptığı
+  yer", "hangi prompt'lar") soruları gönderin, bölümü ona göre yeniden
+  düzenleyeyim. Cümleleri kendi çalışmanıza uyacak şekilde gözden geçirin,
+  yazdıklarım sizin gerçek deneyiminizle örtüşmeli.
+
+  Bir de, README'de commit geçmişine değinmedim. Teslimde "adımları commit
+  ettim" cümlesi geçiyor, o yüzden repo geçmişinizin bu anlatımı
+  desteklediğinden emin olun.
+
+  Son kontrol için terminal adımları
+
+  cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+  .\.venv\Scripts\Activate.ps1
+
+  python manage.py test                    # 25 test, OK
+  python manage.py seed_certificates       # tablodaki 5 satırı yazdırır
+  python manage.py seed_certificates       # tekrar: kopya oluşmaz, "yenilenen
+  eski örnek: 5"
+  python manage.py runserver
+
+  Tarayıcıda http://127.0.0.1:8000/ adresinde sıralamayı (−10 → 0 → 15 → 30 →
+  60), kırmızı, turuncu ve yeşil rozetleri ve 0 ile 30 günün turuncu çıktığını
+  kontrol edin. Admin'de durum filtresini ve aramayı deneyin.
+
+  Seed'i geliştirme veritabanınızda (db.sqlite3) çalıştırdım, yani listenizde şu
+  an bu 5 kayıt var. Dosya .gitignore'da, repoya girmez. Temiz kurulum denemesi
+  için dosyayı silip migrate ve createsuperuser komutlarını yeniden
+  çalıştırabilirsiniz.
+
+  Sorun yoksa son commit'i alabilirsiniz.
+
+> <ide_opened_file>The user opened the file
+  c:\Users\Monster\Desktop\e-tugra_ssl-odev\requirements.txt in the IDE. This
+  may or may not be related to the current task.</ide_opened_file>
+
+> Admin panelinden hem yeni kayıt eklemeyi hem de mevcut kaydı güncellemeyi
+  test ettim, ana sayfa sıralaması ve durum rozetleri dinamik olarak sorunsuz
+  güncellendi README dosyasını da maildeki 4 soruluk AI deneyimini içerecekk
+  şekilde finalize ettim.
+
+  Projeyi teslim etmeden önce son bir kabul kontrolü yapalım:
+  1. Başlangıçta belirlediğimiz CLAUDE.md kuralları ve ödev isterleri açısından
+  dışarıda kalan, atlanan veya gereksiz yere eklenmiş bir şey var mı?
+  2. Repoya girmemesi gereken geçici bir dosya (.env, db.sqlite3, cache vs.)
+  git takibine takılıyor mu?
+  3. Tüm testleri (25 test) son bir kez daha çalıştırıp sonuç tablosunu teyit
+  et
+
+  Her şey olumluysa teslimatı tamamlayıp oturumu kapatacağım.
+
+● PowerShell(cd C:\Users\Monster\Desktop\e-tugra_ssl-odev
+            "--- git ---"…)
+  ⎿  Error: Exit code 255
+     --- git ---
+     true
+     --- tracked ---
+     .gitignore
+     CLAUDE.md
+     README.md
+     certificates/__init__.py
+     certificates/admin.py
+     certificates/apps.py
+     … +43 lines (ctrl+o to expand)
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(CLAUDE.md)
+  ⎿  Added 1 line, removed 1 line
+      36  - `list_filter`: expiration_date (and/or status-based filter), 
+          `search_fields`: domain_name, customer_name.
+      37  
+      38  ## Seed Data
+      39 -- Management command `seed_certificates` creates 4-5 sample cer
+         -tificates covering every state (expired, expires today, expirin
+         -g soon, valid). Dates are relative to `timezone.localdate()`. I
+         -dempotent: re-running must not create duplicates (`get_or_creat
+         -e`).                                                           
+      39 +- Management command `seed_certificates` creates 4-5 sample cer
+         +tificates covering every state (expired, expires today, expirin
+         +g soon, valid). Dates are relative to `timezone.localdate()`. I
+         +dempotent: re-running must not create duplicates. Because dates
+         + are relative to today, the command deletes and recreates only 
+         +its own reserved `*.example.com` rows instead of using `get_or_
+         +create`.                                                       
+      40  - README documents it as an optional step so a fresh checkout s
+          hows a populated table.
+      41  
+      42  ## Testing Standards
+
+● Teslimden önce düzeltmeniz gereken iki şey var, ikisi de kodla ilgili değil.
+  Biri README'deki bir iddia, öteki CLAUDE.md'deki küçük bir tutarsızlık
+  (aşağıda).
+
+  1. Ödev ve CLAUDE.md uyumu
+
+  Beş ödev maddesi karşılandı:
+
+  ┌─────────────────────────────────────────────────┬───────────────────────┐
+  │                      Madde                      │         Durum         │
+  ├─────────────────────────────────────────────────┼───────────────────────┤
+  │ Sertifika modeli: alan adı, müşteri adı, bitiş  │ Tamam                 │
+  │ tarihi                                          │                       │
+  ├─────────────────────────────────────────────────┼───────────────────────┤
+  │ Admin'den ekleme ve düzenleme                   │ Tamam                 │
+  ├─────────────────────────────────────────────────┼───────────────────────┤
+  │ Liste sayfası: tarihe göre sıralı, kalan gün ve │ Tamam                 │
+  │  durum                                          │                       │
+  ├─────────────────────────────────────────────────┼───────────────────────┤
+  │ En az 5 durum testi                             │ Tamam, 9 sınır testi  │
+  │                                                 │ var                   │
+  ├─────────────────────────────────────────────────┼───────────────────────┤
+  │ README'de kurulum ve çalıştırma                 │ Tamam                 │
+  └─────────────────────────────────────────────────┴───────────────────────┘
+
+  Eksik madde yok. CLAUDE.md kuralları da uygulanmış: saat dilimi, localdate(),
+  tek eşik sabiti, today= parametresi, normalizasyon, unique_together ve kapsam
+  dışı bırakılanlar.
+
+  Gereksiz eklenen yok. Seed komutu, admin durum filtresi ve view/admin testleri
+  sizin onayınızla eklendi.
+
+  Düzelttiğim tutarsızlık: CLAUDE.md seed için get_or_create diyordu, oysa kod
+  kendi *.example.com kayıtlarını silip yeniden oluşturuyor. Kodun doğru
+  olduğunu düşünüyorum (tarihler her gün değiştiği için get_or_create kopya
+  üretirdi). Ben CLAUDE.md'yi koda uydurdum. Bu dosyada commit edilmemiş bir
+  değişiklik oluştu.
+
+  İki not:
+  - Filtre eşiği: Admin durum filtresi eşiği tarih aralığı olarak yeniden
+    uyguluyor. Bu kaçınılmaz çünkü veritabanı Python'u çağıramaz. Testle
+    status() ile aynı sonucu verdiği doğrulanıyor.
+  - Deploy uyarıları: check --deploy yedi güvenlik uyarısı veriyor (HSTS, SSL
+    yönlendirmesi, DEBUG, SECRET_KEY vb.). Hepsi geliştirme varsayılanlarından
+    geliyor ve README bunu belirtiyor. Ödev için sorun değil.
+
+  2. Git takibi
+
+  Temiz. Takipte yalnızca kaynak dosyalar var. db.sqlite3, .venv/ ve
+  __pycache__/ ignore ediliyor ve takipte değil. .env ne mevcut ne takipte.
+  Çalışma ağacı temizdi, yani README'deki son halin de commit edilmiş. Son
+  değişiklik yalnızca yukarıdaki CLAUDE.md düzeltmesi.
+
+  3. Testler
+
+  Ran 25 tests in 0.403s — OK
+  makemigrations --check: No changes detected
+
+  ┌─────────────────┬─────────────┐
+  │      Grup       │ Test sayısı │
+  ├─────────────────┼─────────────┤
+  │ Durum sınırları │ 9           │
+  ├─────────────────┼─────────────┤
+  │ Normalizasyon   │ 3           │
+  ├─────────────────┼─────────────┤
+  │ Benzersizlik    │ 2           │
+  ├─────────────────┼─────────────┤
+  │ Sıralama        │ 1           │
+  ├─────────────────┼─────────────┤
+  │ Liste sayfası   │ 4           │
+  ├─────────────────┼─────────────┤
+  │ Admin           │ 4           │
+  ├─────────────────┼─────────────┤
+  │ Seed komutu     │ 2           │
+  ├─────────────────┼─────────────┤
+  │ Toplam          │ 25          │
+  └─────────────────┴─────────────┘
+
+  README'deki AI notu için düzeltme
+
+  Bu kısım teslimde hata olarak görünebilir. 4. soruda şöyle yazıyorsunuz: "AI
+  ilk analizde kullanıcı kimlik doğrulaması, Celery, canlı TLS taraması ve
+  karmaşık regex validatörleri gibi kapsamı aşan öneriler getirdi." Bu doğru
+  değil:
+
+  - Celery, TLS taraması ve e-posta: Bunları ben "kapsam dışı" olarak
+    listelemiştim, öneri olarak sunmamıştım. Siz de bu listeyi onaylamıştınız.
+  - Joker domain regex'i: Ben yalnızca basit bir format validator'ü önermiştim,
+    siz joker regex'i kapsam dışı bıraktınız. Karmaşık regex önermedim.
+  - Login: Bunu bir karar noktası olarak sundum. Doğrulama gerekir ya da
+    "bilinçli açık bırakıldı" notu düşülür demiştim. Siz "ekleme" dediniz. Yani
+    ben öneri getirip siz eliyorsunuz akışı tam doğru değil.
+
+  Teslim edilecek metinde AI hakkında yanlış bir iddia olması sizi zor durumda
+  bırakabilir. Önerim, 108. satırdaki paragrafı şöyle değiştirmeniz:
+
+  ▎ AI, ilk incelemede login gerekliliğini bir karar noktası olarak sundu ve
+  ▎ Celery, canlı TLS taraması, e-posta bildirimi gibi şeyleri kapsam dışı
+  ▎ olarak listeledi. Ödevin "kullanıcı girişi beklenmiyor" kısıtı gereği login
+  ▎ eklememeye ve kapsamı bu listeyle sınırlamaya ben karar verdim; sayfanın
+  ▎ herkese açık olduğunu README'de belirttim.
+
+  89. satırdaki "kullanıcı girişi, Celery, TLS tarayıcı vb. bilinçli olarak
+      eledim" cümlesi için de benzer bir inceleme yapın. O cümle kabaca doğru
+      ama önerilerin AI'dan geldiğini ima ediyor.
+
+  Ayrıca 94. satırdaki "veritabanı indeksini bizzat inceledim" ifadesini ben
+  doğrulayamam. O sizin beyanınız, doğruysa kalsın.
+
+  Bu iki konuyu düzelttiyseniz (CLAUDE.md değişikliğini ve README paragrafını
+  commit ettiyseniz) teslimata hazırsınız. Çıktılara dayanarak proje teknik
+  olarak tamam.
