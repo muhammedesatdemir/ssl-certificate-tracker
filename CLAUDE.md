@@ -20,6 +20,7 @@
   - `expiration_date` is a `DateField` (calendar day in Europe/Istanbul), `db_index=True`.
   - `Meta.ordering = ['expiration_date']`; sorting happens in the DB, not in Python.
   - `unique_together = (domain_name, expiration_date)`. `domain_name` alone is NOT unique (renewals overlap with the old certificate).
+- `domain_name` is normalized with `.strip().lower()` in `save()` AND in `clean()` (so admin form uniqueness validation sees the normalized value, not just the DB layer).
 - "Today" is ALWAYS `django.utils.timezone.localdate()`. Never `datetime.now()`, never naive datetimes, and never compare a `datetime` (`timezone.now()`) with the `DateField`.
 - Remaining days = `(expiration_date - today).days` (negative once expired).
 - Boundary: `expiration_date == today` means 0 days left; the certificate is valid until end of day and counts as "Yakında Dolacak".
@@ -34,10 +35,15 @@
 - `list_display`: domain_name, customer_name, expiration_date, days left, status.
 - `list_filter`: expiration_date (and/or status-based filter), `search_fields`: domain_name, customer_name.
 
+## Seed Data
+- Management command `seed_certificates` creates 4-5 sample certificates covering every state (expired, expires today, expiring soon, valid). Dates are relative to `timezone.localdate()`. Idempotent: re-running must not create duplicates (`get_or_create`).
+- README documents it as an optional step so a fresh checkout shows a populated table.
+
 ## Testing Standards
 - Do not mock the clock. Pass `today=` explicitly into the model methods; tests must never depend on the real date.
 - Minimum 5 status tests; boundary set is mandatory: yesterday (-1), today (0), +29, +30, +31 days. Also cover far future and far past.
 - Add one view test: list page ordering by `expiration_date` and displayed status text.
+- Add a test that domain normalization (case/whitespace) prevents duplicates.
 - Add one test for `unique_together` behaviour (same domain, different date allowed; same pair rejected).
 
 ## README
